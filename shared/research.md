@@ -1,26 +1,29 @@
-# Shared Research Context
+# shared research.md
 
-## 研究主题
-- 待填写
+## 当前讨论轮次
+- 日期：
+- 议题：
 
-## 本轮核心问题
-1. 
-2. 
-3. 
+## 背景（来自 wiki）
+- 相关 gaps：
+- 相关 concepts：
+- 关键证据论文：
 
-## 多模型结论汇总
+## 三模型结论
 
-### Claude Code
+### Claude
 - 
 
-### Gemini CLI
+### Gemini
 - 
 
-### Codex CLI
+### Codex
 - 
 
-## 冲突观点（待验证）
-- 
+## 共识与分歧
+- 共识：
+- 分歧：
 
-## 下一步行动
-- [ ] 
+## 回写动作
+- [ ] 写入 `wiki/synthesis/discussion-YYYY-MM-DD.md`
+- [ ] 更新 `wiki/log.md`

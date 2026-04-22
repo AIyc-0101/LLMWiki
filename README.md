@@ -1,38 +1,49 @@
 # LLMWiki
 
-基于 `workflow.md` 的可运行项目骨架，用于论文发现、原文入库、知识编译、可视化讨论与迭代回写。
+按照最新流程图优化后的研究工程：
+- `raw/` 只增不改（论文、笔记、素材）
+- `wiki/` 是持续演化的知识层
+- Query 的高价值答案必须回写 `wiki/synthesis/`
 
-## 目录
+## 目录结构
 
 ```text
-raw/                # 原始资料，只增不改
-  papers/
-  clips/
-wiki/               # 结构化知识库
-  papers/
-  concepts/
-  gaps/
-shared/
-  research.md       # 多模型协作上下文
-scripts/            # 自动化脚本
-prompts/            # 提示词模板
+your-research-wiki/
+├── CLAUDE.md
+├── raw/
+│   ├── papers/
+│   ├── notes/
+│   └── assets/
+├── wiki/
+│   ├── index.md
+│   ├── log.md
+│   ├── overview.md
+│   ├── papers/
+│   ├── concepts/
+│   ├── entities/
+│   ├── comparisons/
+│   ├── gaps/
+│   └── synthesis/
+├── prompts/
+└── shared/
 ```
 
 ## 快速开始
 
-1. 将论文 Markdown 放入 `raw/papers/`。
-2. 运行编译脚本生成 `wiki/papers/` 条目：
-   ```bash
-   python3 scripts/compile_wiki.py
-   ```
-3. 运行质量检查：
-   ```bash
-   python3 scripts/lint_wiki.py
-   ```
-4. 复制 `prompts/chatgpt_visualization_prompt.md` 到 ChatGPT，粘贴 `wiki/` 内容生成图谱与研究空白。
+```bash
+python3 scripts/init_wiki.py
+python3 scripts/compile_wiki.py
+python3 scripts/lint_wiki.py
+```
 
-## 约定
+然后：
+1. 把新论文放到 `raw/papers/`
+2. 运行编译脚本生成 `wiki/papers/` 草稿
+3. 用 `prompts/` 中的 Ingest / 讨论 / Idea / Lint 提示词驱动迭代
+4. 将 Query 结论写入 `wiki/synthesis/discussion-YYYY-MM-DD.md`
 
-- `raw/` 目录内容不覆盖历史文件。
-- `wiki/` 是可持续演进的知识库。
-- `shared/research.md` 用于 Claude/Gemini/Codex 协作讨论。
+## 核心原则
+
+- `raw/` 只读，`wiki/` 可持续更新。
+- `wiki/log.md` 必须 append-only。
+- `wiki/gaps/` 与 `wiki/synthesis/` 是创新密度最高的目录。
