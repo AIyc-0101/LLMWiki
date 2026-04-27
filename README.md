@@ -343,3 +343,28 @@ Karpathy 特别强调：好的答案可以作为新页面写回 wiki。一次对
 - 如果证据不足，要直接说不足，不要硬下结论；
 - 用中文输出。
 ```
+
+## Semantic Scholar 文献发现（新增）
+
+新增脚本：`scripts/s2_discovery.py`，用于关键词搜索、种子论文追踪、作者追踪与推荐论文收集。
+
+```bash
+export S2_API_KEY="xxx"
+python scripts/s2_discovery.py search
+python scripts/s2_discovery.py enrich-seeds
+python scripts/s2_discovery.py citations
+python scripts/s2_discovery.py references
+python scripts/s2_discovery.py authors
+python scripts/s2_discovery.py recommend
+python scripts/s2_discovery.py weekly
+```
+
+相关文件：
+- `discovery/inbox.csv`
+- `discovery/semantic_scholar/config.yaml`
+- `discovery/semantic_scholar/queries.txt`
+- `discovery/semantic_scholar/seed_papers.csv`
+- `discovery/semantic_scholar/tracked_authors.csv`
+- `discovery/semantic_scholar/semantic_cache.sqlite`
+- `discovery/semantic_scholar/semantic_weekly.csv`
+- `discovery/semantic_scholar/semantic_weekly.md`

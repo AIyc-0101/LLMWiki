@@ -1,0 +1,35 @@
+semantic_scholar:
+  base_url: "https://api.semanticscholar.org"
+  request_interval_seconds: 1.1
+  max_retries: 5
+  timeout_seconds: 30
+
+search:
+  limit_per_query: 20
+  min_year: 2020
+
+citation_tracking:
+  max_citations_per_seed: 50
+
+reference_tracking:
+  max_references_per_seed: 50
+
+recommendation:
+  max_recommendations_per_seed: 20
+
+author_tracking:
+  min_year: 2020
+  max_papers_per_author: 50
+
+scoring:
+  topic_keywords:
+    - structured illumination microscopy
+    - SIM reconstruction
+    - microscopy super-resolution
+    - fluorescence microscopy
+    - multimodal large language model
+    - scientific image understanding
+  exclude_keywords:
+    - purely clinical
+    - questionnaire
+    - survey only
