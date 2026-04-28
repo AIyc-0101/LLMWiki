@@ -782,6 +782,12 @@ python scripts/pdf_to_md.py
 - 用中文输出。
 ```
 
+### 6 可视化提示词
+将wiki\synthesis\目录下的visualization-x.md文件中的mermaid信息复制到mermaid在线生成网站进行可视化。
+```text
+请读取 prompts/chatgpt_visualization_prompt.md，并按其中规则分析 wiki/ 下的内容。重点读取 wiki/index.md、wiki/overview.md、wiki/synthesis/field-map.md、wiki/synthesis/shared-assumptions.md、wiki/gaps/confirmed-gaps.md、wiki/gaps/questions.md、wiki/gaps/hypotheses.md。只输出 Mermaid 图、Top-3 research gaps、结论-证据-风险表，先给出拟写入内容和目标文件，等待我确认，不要直接写入。
+```
+
 ## 五、一个关键点：Query 的答案要写回 wiki
 
 Karpathy 特别强调：好的答案可以作为新页面写回 wiki。一次对比分析、一个你发现的连接——这些很有价值，不应该消失在对话历史里。这样你的探索过程也在知识库里积累复利。
