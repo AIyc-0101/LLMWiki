@@ -15,12 +15,14 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
 import sqlite3
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -38,8 +40,7 @@ QUERIES_PATH = S2_DIR / "queries.txt"
 SEEDS_PATH = S2_DIR / "seed_papers.csv"
 AUTHORS_PATH = S2_DIR / "tracked_authors.csv"
 CACHE_PATH = S2_DIR / "semantic_cache.sqlite"
-WEEKLY_CSV_PATH = S2_DIR / "semantic_weekly.csv"
-WEEKLY_MD_PATH = S2_DIR / "semantic_weekly.md"
+WEEKLY_BASENAME = "semantic_weekly"
 INBOX_PATH = DISCOVERY_DIR / "inbox.csv"
 
 INBOX_COLUMNS = [
@@ -89,14 +90,55 @@ def setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
+def configure_stdio_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+def pause_before_exit() -> None:
+    if os.name != "nt" or os.environ.get("S2_NO_PAUSE") == "1":
+        return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return
+
+    print("\n运行结束。按任意键退出...", end="", flush=True)
+    try:
+        import msvcrt
+
+        msvcrt.getch()
+    except Exception:
+        try:
+            input()
+        except EOFError:
+            pass
+    finally:
+        print()
+
+
 def now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def run_timestamp() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def weekly_paths(run_id: str) -> Tuple[Path, Path]:
+    return S2_DIR / f"{WEEKLY_BASENAME}_{run_id}.csv", S2_DIR / f"{WEEKLY_BASENAME}_{run_id}.md"
+
+
+def clean_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return "".join(ch if ch == "\n" or ch == "\t" or ord(ch) >= 32 else " " for ch in text)
 
 
 def ensure_csv(path: Path, columns: List[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        pd.DataFrame(columns=columns).to_csv(path, index=False, encoding="utf-8")
+        pd.DataFrame(columns=columns).to_csv(path, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
 
 
 def load_yaml(path: Path) -> Dict[str, Any]:
@@ -247,6 +289,9 @@ class SemanticCache:
         self.conn = sqlite3.connect(str(self.db_path))
         self._init_schema()
 
+    def close(self) -> None:
+        self.conn.close()
+
     def _init_schema(self) -> None:
         self.conn.execute(
             """
@@ -294,7 +339,7 @@ class SemanticCache:
                 return row[0]
         return None
 
-    def upsert_paper(self, paper: Dict[str, Any], source: str) -> None:
+    def upsert_paper(self, paper: Dict[str, Any], source: str) -> bool:
         existing_id = self.find_existing_id(paper)
         discovered_at = now_iso()
         raw_json = json.dumps(paper.get("raw_json", {}), ensure_ascii=False)
@@ -330,9 +375,11 @@ class SemanticCache:
                 self.conn.commit()
             except sqlite3.IntegrityError:
                 self._merge_update(paper, source)
-            return
+                return False
+            return True
 
         self._merge_update(paper, source)
+        return False
 
     def _merge_update(self, paper: Dict[str, Any], source: str) -> None:
         pid = self.find_existing_id(paper)
@@ -386,7 +433,7 @@ def parse_external_ids(external_ids: Dict[str, Any]) -> Tuple[str, str]:
 def author_names(authors: Any) -> str:
     if not isinstance(authors, list):
         return ""
-    return "; ".join([str(a.get("name", "")).strip() for a in authors if isinstance(a, dict) and a.get("name")])
+    return "; ".join([clean_text(a.get("name", "")) for a in authors if isinstance(a, dict) and a.get("name")])
 
 
 def normalize_paper(p: Dict[str, Any]) -> Dict[str, Any]:
@@ -399,13 +446,13 @@ def normalize_paper(p: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "paperId": str(p.get("paperId") or "").strip(),
-        "title": str(p.get("title") or "").strip(),
-        "abstract": str(p.get("abstract") or "").strip(),
+        "title": clean_text(p.get("title")),
+        "abstract": clean_text(p.get("abstract")),
         "year": p.get("year") or "",
-        "venue": str(p.get("venue") or "").strip(),
+        "venue": clean_text(p.get("venue")),
         "doi": doi,
         "arxiv_id": arxiv_id,
-        "url": str(p.get("url") or "").strip(),
+        "url": clean_text(p.get("url")),
         "open_access_pdf": open_pdf,
         "authors": author_names(p.get("authors")),
         "citationCount": int(p.get("citationCount") or 0),
@@ -469,11 +516,23 @@ def score_paper(paper: Dict[str, Any], source: str) -> ScoreResult:
     return ScoreResult(score=score, grade=grade, reason="; ".join(reasons) if reasons else "baseline score")
 
 
+def record_identity(record: Dict[str, Any]) -> Tuple[str, str]:
+    s2_id = str(record.get("s2_paper_id") or record.get("paperId") or "").strip()
+    doi = str(record.get("doi") or "").strip().lower()
+    arxiv_id = str(record.get("arxiv_id") or "").strip().lower()
+    if s2_id or doi or arxiv_id:
+        return ("id", f"{s2_id}|{doi}|{arxiv_id}")
+
+    title = str(record.get("title") or "").strip().lower()
+    year = str(record.get("year") or "").strip()
+    return ("title_year", f"{title}|{year}")
+
+
 def unique_records(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     out: List[Dict[str, Any]] = []
     for r in records:
-        key = (r.get("s2_paper_id", ""), r.get("doi", ""), r.get("arxiv_id", ""))
+        key = record_identity(r)
         if key in seen:
             continue
         seen.add(key)
@@ -490,9 +549,33 @@ def append_rows(path: Path, rows: List[Dict[str, Any]], columns: List[str]) -> N
     for col in columns:
         if col not in new.columns:
             new[col] = ""
-    combined = pd.concat([old, new[columns]], ignore_index=True)
+
+    existing_rows = old.fillna("").to_dict("records")
+    existing_keys = {record_identity(r) for r in existing_rows}
+
+    appendable_rows: List[Dict[str, Any]] = []
+    for row in new[columns].fillna("").to_dict("records"):
+        key = record_identity(row)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        appendable_rows.append(row)
+
+    if not appendable_rows:
+        return
+
+    combined = pd.concat([old, pd.DataFrame(appendable_rows, columns=columns)], ignore_index=True)
     combined = combined.fillna("")
-    combined.to_csv(path, index=False, encoding="utf-8")
+    combined.to_csv(path, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
+
+
+def write_rows(path: Path, rows: List[Dict[str, Any]], columns: List[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(rows)
+    for col in columns:
+        if col not in df.columns:
+            df[col] = ""
+    df[columns].fillna("").to_csv(path, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
 
 
 def load_queries() -> List[str]:
@@ -527,18 +610,23 @@ def paper_to_output(p: Dict[str, Any], source: str, topic: str, priority: str) -
 
 def command_search(client: S2Client, cache: SemanticCache, config: Dict[str, Any]) -> List[Dict[str, Any]]:
     queries = load_queries()
-    limit = int(config.get("search", {}).get("limit_per_query", 20))
-    min_year = int(config.get("search", {}).get("min_year", 2020))
+    limit = int(config.get("search", {}).get("limit_per_query", 50))
+    min_year = int(config.get("search", {}).get("min_year", 2023))
     outputs: List[Dict[str, Any]] = []
 
     for q in queries:
-        for item in client.paper_search_bulk(q, limit=limit):
+        query_count = 0
+        for item in client.paper_search(q, limit=limit):
             p = normalize_paper(item)
             if int(p.get("year") or 0) and int(p.get("year") or 0) < min_year:
                 continue
-            cache.upsert_paper(p, source="semantic_search")
-            out = paper_to_output(p, source="semantic_search", topic=q, priority="medium")
-            outputs.append(out)
+            is_new = cache.upsert_paper(p, source="semantic_search")
+            if is_new:
+                out = paper_to_output(p, source="semantic_search", topic=q, priority="medium")
+                outputs.append(out)
+            query_count += 1
+            if query_count >= limit:
+                break
 
     return outputs
 
@@ -583,7 +671,7 @@ def command_enrich_seeds(client: S2Client) -> None:
             rowd["s2_paper_id"] = p.get("paperId") or rowd["s2_paper_id"]
         updated.append(rowd)
 
-    pd.DataFrame(updated).to_csv(SEEDS_PATH, index=False, encoding="utf-8")
+    pd.DataFrame(updated).to_csv(SEEDS_PATH, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
 
 
 def seed_rows_for_tracking() -> pd.DataFrame:
@@ -608,8 +696,8 @@ def command_citations(client: S2Client, cache: SemanticCache, config: Dict[str, 
             if not isinstance(cp, dict):
                 continue
             p = normalize_paper(cp)
-            cache.upsert_paper(p, source="semantic_citation")
-            outputs.append(paper_to_output(p, "semantic_citation", str(row.get("topic", "")), str(row.get("priority", ""))))
+            if cache.upsert_paper(p, source="semantic_citation"):
+                outputs.append(paper_to_output(p, "semantic_citation", str(row.get("topic", "")), str(row.get("priority", ""))))
     return outputs
 
 
@@ -626,15 +714,15 @@ def command_references(client: S2Client, cache: SemanticCache, config: Dict[str,
             if not isinstance(rp, dict):
                 continue
             p = normalize_paper(rp)
-            cache.upsert_paper(p, source="semantic_reference")
-            outputs.append(paper_to_output(p, "semantic_reference", str(row.get("topic", "")), str(row.get("priority", ""))))
+            if cache.upsert_paper(p, source="semantic_reference"):
+                outputs.append(paper_to_output(p, "semantic_reference", str(row.get("topic", "")), str(row.get("priority", ""))))
     return outputs
 
 
 def command_authors(client: S2Client, cache: SemanticCache, config: Dict[str, Any]) -> List[Dict[str, Any]]:
     cols = ["name", "s2_author_id", "affiliation", "topic", "note"]
     authors = read_csv_safe(AUTHORS_PATH, cols)
-    min_year = int(config.get("author_tracking", {}).get("min_year", 2020))
+    min_year = int(config.get("author_tracking", {}).get("min_year", 2023))
     max_papers = int(config.get("author_tracking", {}).get("max_papers_per_author", 50))
     outputs: List[Dict[str, Any]] = []
 
@@ -661,12 +749,12 @@ def command_authors(client: S2Client, cache: SemanticCache, config: Dict[str, An
             p = normalize_paper(p0)
             if int(p.get("year") or 0) < min_year:
                 continue
-            cache.upsert_paper(p, source="semantic_author")
-            outputs.append(paper_to_output(p, "semantic_author", str(rowd.get("topic", "")), "B"))
+            if cache.upsert_paper(p, source="semantic_author"):
+                outputs.append(paper_to_output(p, "semantic_author", str(rowd.get("topic", "")), "B"))
             count += 1
         enriched_rows.append(rowd)
 
-    pd.DataFrame(enriched_rows).to_csv(AUTHORS_PATH, index=False, encoding="utf-8")
+    pd.DataFrame(enriched_rows).to_csv(AUTHORS_PATH, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
     return outputs
 
 
@@ -680,20 +768,22 @@ def command_recommend(client: S2Client, cache: SemanticCache, config: Dict[str, 
             continue
         for item in client.recommend_for_paper(pid, max_n):
             p = normalize_paper(item)
-            cache.upsert_paper(p, source="semantic_recommendation")
-            outputs.append(paper_to_output(p, "semantic_recommendation", str(row.get("topic", "")), str(row.get("priority", ""))))
+            if cache.upsert_paper(p, source="semantic_recommendation"):
+                outputs.append(paper_to_output(p, "semantic_recommendation", str(row.get("topic", "")), str(row.get("priority", ""))))
     return outputs
 
 
-def persist_results(results: List[Dict[str, Any]]) -> None:
+def persist_results(results: List[Dict[str, Any]], weekly_csv_path: Path, run_id: str) -> None:
+    weekly_columns = INBOX_COLUMNS + ["grade", "run_id"]
     if not results:
+        write_rows(weekly_csv_path, [], weekly_columns)
         return
     deduped = unique_records(results)
 
-    weekly_rows = [r for r in deduped]
-    append_rows(WEEKLY_CSV_PATH, weekly_rows, INBOX_COLUMNS + ["grade"])
+    weekly_rows = [{**r, "run_id": run_id} for r in deduped]
+    write_rows(weekly_csv_path, weekly_rows, weekly_columns)
 
-    inbox_rows = [r for r in deduped if r.get("grade") in {"A", "B"}]
+    inbox_rows = [dict(r) for r in deduped if r.get("grade") in {"A", "B"}]
     for r in inbox_rows:
         r.pop("grade", None)
     append_rows(INBOX_PATH, inbox_rows, INBOX_COLUMNS)
@@ -706,16 +796,16 @@ def markdown_table(rows: List[Dict[str, Any]], cols: List[Tuple[str, str]]) -> s
     sep = "|" + "|".join(["---:" if i == 0 or i == 1 else "---" for i, _ in enumerate(cols)]) + "|"
     lines = [header, sep]
     for r in rows:
-        vals = [str(r.get(key, "")).replace("\n", " ") for _, key in cols]
+        vals = [clean_text(r.get(key, "")).replace("\n", " ").replace("|", "\\|") for _, key in cols]
         lines.append("| " + " | ".join(vals) + " |")
     return "\n".join(lines)
 
 
-def generate_weekly_md() -> None:
-    df = read_csv_safe(WEEKLY_CSV_PATH, INBOX_COLUMNS + ["grade"])
+def generate_weekly_md(weekly_csv_path: Path, weekly_md_path: Path, run_id: str) -> None:
+    df = read_csv_safe(weekly_csv_path, INBOX_COLUMNS + ["grade", "run_id"])
     if df.empty:
-        WEEKLY_MD_PATH.write_text(
-            "# Semantic Scholar Weekly Report\n\n## Summary\n- New search results: 0\n- New citing papers: 0\n- New reference papers: 0\n- New recommended papers: 0\n- New author papers: 0\n",
+        weekly_md_path.write_text(
+            f"# Semantic Scholar Weekly Report\n\nRun: {run_id}\n\n## Summary\n- New search results: 0\n- New citing papers: 0\n- New reference papers: 0\n- New recommended papers: 0\n- New author papers: 0\n",
             encoding="utf-8",
         )
         return
@@ -736,6 +826,8 @@ def generate_weekly_md() -> None:
 
     text = [
         "# Semantic Scholar Weekly Report",
+        "",
+        f"Run: {run_id}",
         "",
         "## Summary",
         f"- New search results: {counts['semantic_search']}",
@@ -769,14 +861,13 @@ def generate_weekly_md() -> None:
         "- Send to Marker:",
         "- Add to Connected Papers:",
     ]
-    WEEKLY_MD_PATH.write_text("\n".join(text), encoding="utf-8")
+    weekly_md_path.write_text("\n".join(text), encoding="utf-8")
 
 
 def init_layout() -> None:
     S2_DIR.mkdir(parents=True, exist_ok=True)
     DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
     ensure_csv(INBOX_PATH, INBOX_COLUMNS)
-    ensure_csv(WEEKLY_CSV_PATH, INBOX_COLUMNS + ["grade"])
     ensure_csv(SEEDS_PATH, ["title", "doi", "arxiv_id", "s2_paper_id", "topic", "priority", "note"])
     ensure_csv(AUTHORS_PATH, ["name", "s2_author_id", "affiliation", "topic", "note"])
     if not QUERIES_PATH.exists():
@@ -784,6 +875,7 @@ def init_layout() -> None:
 
 
 def main() -> int:
+    configure_stdio_encoding()
     setup_logging()
     init_layout()
     config = load_yaml(CONFIG_PATH)
@@ -803,6 +895,8 @@ def main() -> int:
 
     cache = SemanticCache(CACHE_PATH)
     all_results: List[Dict[str, Any]] = []
+    run_id = run_timestamp()
+    weekly_csv_path, weekly_md_path = weekly_paths(run_id)
 
     if args.command == "search":
         all_results.extend(command_search(client, cache, config))
@@ -824,13 +918,22 @@ def main() -> int:
         all_results.extend(command_authors(client, cache, config))
         all_results.extend(command_recommend(client, cache, config))
 
-    persist_results(all_results)
-    if args.command == "weekly" or all_results:
-        generate_weekly_md()
+    persist_results(all_results, weekly_csv_path, run_id)
+    if args.command != "enrich-seeds":
+        generate_weekly_md(weekly_csv_path, weekly_md_path, run_id)
 
-    logging.info("Done. command=%s results=%d", args.command, len(all_results))
+    logging.info("Done. command=%s results=%d weekly_csv=%s", args.command, len(all_results), weekly_csv_path)
+    cache.close()
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        code = main()
+    except Exception:
+        traceback.print_exc()
+        pause_before_exit()
+        sys.exit(1)
+
+    pause_before_exit()
+    sys.exit(code)
