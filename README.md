@@ -1,6 +1,5 @@
-# LLMWiki 使用说明
-
-此版本仅针对“积累科研领域经验 + 和 LLM 协作讨论 idea”这个需求设计。
+# LLMWiki项目使用说明
+Semantic Scholar寻找文献使用说明见第三节、LLMWiki使用说明见第四节。
 
 ## 一、目录结构设计
 
@@ -20,6 +19,17 @@ your-research-wiki/
 │   ├── papers/           ← MinerU 转换的 PDF → .md
 │   ├── notes/            ← 你自己的笔记、arXiv 页面 clip
 │   └── assets/           ← 图片、图表（本地存储）
+│
+├── discovery/            ← 自动文献发现层（基于Semantic Scholar API实现），脚本写入，供人工筛选和后续 ingest
+│   ├── inbox.csv         ← A/B 级候选论文入口，后续下载 PDF 或写入 wiki
+│   │
+│   └── semantic_scholar/ ← Semantic Scholar 发现工作区
+│       ├── queries.txt                 ← 关键词搜索列表
+│       ├── seed_papers.csv             ← 种子论文列表
+│       ├── tracked_authors.csv         ← 追踪作者列表
+│       ├── semantic_cache.sqlite       ← 跨周去重和论文缓存
+│       ├── semantic_weekly_[run].csv   ← 每次运行生成的发现结果 CSV
+│       └── semantic_weekly_[run].md    ← 每次运行生成的 Markdown 周报
 │
 └── wiki/                 ← LLM 写，你读
     ├── index.md          ← 所有页面目录（标题 + 一句话摘要）
@@ -147,9 +157,401 @@ status（论文）: read / skimmed / queued
 status（假设）: draft / testing / confirmed / rejected
 ```
 
-## 三、Prompt（使用说明）
 
-### 3.1 Ingest 提示词（处理新论文）
+## 三、Semantic Scholar 文献发现
+
+新增脚本：`scripts/s2_discovery.py`，用于从 Semantic Scholar 批量发现与你研究方向相关的新论文，并把结果整理到本地 CSV、SQLite 缓存和 Markdown 周报中。
+
+它支持 5 类发现来源：
+
+- 关键词搜索
+- 种子论文的被引论文追踪
+- 种子论文的参考文献追踪
+- 指定作者的新论文追踪
+- 基于种子论文的推荐论文收集
+
+### 1. 依赖与前置条件
+
+脚本依赖：
+
+```bash
+pip install pandas requests pyyaml
+```
+
+你还需要一个 Semantic Scholar API Key（使用教育邮箱申请，免得获取），并在运行前设置环境变量 `S2_API_KEY`。
+
+Linux / macOS:
+
+```bash
+export S2_API_KEY="your_api_key"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:S2_API_KEY="your_api_key"
+```
+
+如果没有设置 `S2_API_KEY`，脚本会直接退出。
+
+### 2. 相关文件
+
+- `discovery/inbox.csv`
+- `discovery/semantic_scholar/config.yaml`
+- `discovery/semantic_scholar/queries.txt`
+- `discovery/semantic_scholar/seed_papers.csv`
+- `discovery/semantic_scholar/tracked_authors.csv`
+- `discovery/semantic_scholar/semantic_cache.sqlite`
+- `discovery/semantic_scholar/semantic_weekly.csv`
+- `discovery/semantic_scholar/semantic_weekly.md`
+
+脚本启动时会自动初始化这些目录和文件。不存在时会自动创建，不需要手动建目录。
+
+### 3. 配置文件说明
+
+配置文件路径：`discovery/semantic_scholar/config.yaml`
+
+当前配置项包括：
+
+- `semantic_scholar.base_url`：API 地址，默认即可。
+- `semantic_scholar.request_interval_seconds`：请求间隔，避免触发限流。
+- `semantic_scholar.max_retries`：失败后的最大重试次数。
+- `semantic_scholar.timeout_seconds`：单次请求超时时间。
+- `search.limit_per_query`：每个关键词最多取多少条结果。
+- `search.min_year`：关键词搜索时保留的最小年份。
+- `citation_tracking.max_citations_per_seed`：每篇种子论文最多追踪多少篇被引论文。
+- `reference_tracking.max_references_per_seed`：每篇种子论文最多追踪多少篇参考文献。
+- `recommendation.max_recommendations_per_seed`：每篇种子论文最多取多少篇推荐论文。
+- `author_tracking.min_year`：作者追踪时保留的最小年份。
+- `author_tracking.max_papers_per_author`：每个作者最多抓取多少篇论文。
+
+### 4. 输入文件格式
+
+#### 4.1 `queries.txt`
+
+按行填写检索词，一行一个 query，例如：
+
+```text
+structured illumination microscopy
+SIM reconstruction
+multimodal large language model microscopy
+scientific image understanding
+```
+
+脚本会对每一行分别调用 Semantic Scholar 搜索接口。
+
+#### 4.2 `seed_papers.csv`
+
+列头格式：
+
+```csv
+title,doi,arxiv_id,s2_paper_id,topic,priority,note
+```
+
+字段说明：
+
+- `title`：论文标题，可用于补全匹配。
+- `doi`：DOI，推荐填写。
+- `arxiv_id`：arXiv 编号。
+- `s2_paper_id`：Semantic Scholar 的 paperId。
+- `topic`：该论文所属主题，便于后续筛选。
+- `priority`：通常填 `A` 或 `B`。脚本会优先追踪 A/B 级种子。
+- `note`：备注。
+
+建议至少填写 `doi`、`arxiv_id`、`s2_paper_id` 中的一个，否则很难稳定追踪。
+
+#### 4.3 `tracked_authors.csv`
+
+列头格式：
+
+```csv
+name,s2_author_id,affiliation,topic,note
+```
+
+字段说明：
+
+- `name`：作者姓名。
+- `s2_author_id`：Semantic Scholar authorId。若为空，脚本会先按姓名搜索并自动补全。
+- `affiliation`：作者单位，可选。
+- `topic`：追踪主题，可选。
+- `note`：备注。
+
+### 5. 使用说明
+
+脚本入口：
+
+```bash
+python scripts/s2_discovery.py <command>
+```
+
+支持的命令如下。
+
+#### 5.1 `search`
+
+```bash
+python scripts/s2_discovery.py search
+```
+
+作用：
+
+- 读取 `queries.txt`
+- 对每个 query 执行论文搜索
+- 根据 `search.min_year` 过滤较早论文
+- 将结果写入本地缓存
+- 将结果追加到周报 CSV
+- 将 A/B 级论文写入 `discovery/inbox.csv`
+
+适用场景：
+
+- 你先想按关键词大范围拉一批新论文。
+
+#### 5.2 `enrich-seeds`
+
+```bash
+python scripts/s2_discovery.py enrich-seeds
+```
+
+作用：
+
+- 读取 `seed_papers.csv`
+- 根据已有的 `s2_paper_id`、`doi` 或 `arxiv_id` 批量补全种子论文信息
+- 回写 `seed_papers.csv`
+
+适用场景：
+
+- 你刚手工填完种子论文，想先把 `s2_paper_id` 和基础元数据补齐。
+
+#### 5.3 `citations`
+
+```bash
+python scripts/s2_discovery.py citations
+```
+
+作用：
+
+- 遍历种子论文
+- 拉取引用这些种子论文的后续论文
+- 写入缓存、周报和收件箱
+
+适用场景：
+
+- 你想知道最近谁在延续、应用或挑战你的核心种子论文。
+
+#### 5.4 `references`
+
+```bash
+python scripts/s2_discovery.py references
+```
+
+作用：
+
+- 遍历种子论文
+- 拉取这些种子论文引用过的参考文献
+- 写入缓存、周报和收件箱
+
+适用场景：
+
+- 你想向前追溯知识源头，补文献谱系。
+
+#### 5.5 `authors`
+
+```bash
+python scripts/s2_discovery.py authors
+```
+
+作用：
+
+- 读取 `tracked_authors.csv`
+- 自动识别或使用现成的 `s2_author_id`
+- 拉取这些作者近年的论文
+- 写入缓存、周报和收件箱
+
+适用场景：
+
+- 你已经明确想长期跟踪几个课题组或作者。
+
+#### 5.6 `recommend`
+
+```bash
+python scripts/s2_discovery.py recommend
+```
+
+作用：
+
+- 基于种子论文调用 Semantic Scholar 推荐接口
+- 收集推荐论文
+- 写入缓存、周报和收件箱
+
+适用场景：
+
+- 你希望从相似论文中快速扩展阅读池。
+
+#### 5.7 `weekly`
+
+```bash
+python scripts/s2_discovery.py weekly
+```
+
+作用：
+
+- 先补全种子论文
+- 再执行 `search`
+- 再执行 `citations`
+- 再执行 `references`
+- 再执行 `authors`
+- 再执行 `recommend`
+- 最后统一生成本周 Markdown 周报
+
+适用场景：
+
+- 每周例行跑一次完整发现流程。
+
+如果你只想执行一次完整任务，通常直接跑 `weekly` 即可。
+
+### 6. 评分与筛选逻辑
+
+脚本会为每篇论文打分，并标记为 `A`、`B`、`C`：
+
+- `A`：高优先级，优先下载和精读
+- `B`：中优先级，建议人工复核
+- `C`：低优先级，保留记录但不进入收件箱
+
+当前打分会综合考虑：
+
+- 标题是否命中 SIM / microscopy super-resolution 等关键词
+- 摘要是否包含 reconstruction、super-resolution、inverse problem、physics-informed 等信号
+- 是否提到 multimodal、VLM、LLM、foundation model
+- 是否为近两年论文
+- 是否提供开放 PDF
+- 引用数是否较高
+- 是否来自 citation / recommendation 这类高价值来源
+- 是否存在明显不相关倾向，例如纯临床诊断、纯生物实验、非重建类 survey
+
+`A/B` 级论文会被追加到 `discovery/inbox.csv`，供你后续下载 PDF、送入解析链路或人工筛选。
+
+### 7. 输出结果说明
+
+#### 7.1 `discovery/inbox.csv`
+
+这是后续处理入口，只保留 `A/B` 级论文。典型字段包括：
+
+- `source`：来源，如 `semantic_search`、`semantic_citation`
+- `topic`：所属主题
+- `score`：数值评分
+- `priority`：继承自种子或默认优先级
+- `title`
+- `year`
+- `venue`
+- `authors`
+- `doi`
+- `arxiv_id`
+- `s2_paper_id`
+- `url`
+- `open_access_pdf`
+- `abstract`
+- `reason`：打分原因
+- `discovered_at`
+- `next_action`
+
+#### 7.2 `semantic_weekly.csv`
+
+保存本轮发现结果的明细，包含 `grade` 列，比 `inbox.csv` 更完整。
+
+#### 7.3 `semantic_weekly.md`
+
+自动生成 Markdown 周报，内容包括：
+
+- 本周各来源新增数量
+- A 级论文列表
+- B 级论文列表
+- 新的引用论文
+- 推荐论文
+- 作者更新
+- 后续待办
+
+#### 7.4 `semantic_cache.sqlite`
+
+本地缓存库，用于去重和信息补全。脚本会优先根据以下标识判断是否已存在：
+
+- `paperId`
+- `doi`
+- `arxiv_id`
+
+这能减少重复写入和重复追踪。
+
+### 8. 推荐使用流程
+
+第一次使用，建议按下面顺序：
+
+1. 配置 `S2_API_KEY`
+2. 填写 `queries.txt`
+3. 填写 `seed_papers.csv`
+4. 填写 `tracked_authors.csv`
+5. 运行 `python scripts/s2_discovery.py enrich-seeds`
+6. 运行 `python scripts/s2_discovery.py weekly`
+7. 查看 `discovery/inbox.csv` 和 `discovery/semantic_scholar/semantic_weekly.md`
+
+如果你只是先测试关键词搜索，可以只运行：
+
+```bash
+python scripts/s2_discovery.py search
+```
+
+如果你已经维护了一批高质量种子论文，推荐直接每周运行：
+
+```bash
+python scripts/s2_discovery.py weekly
+```
+
+### 9. 一个最小示例
+
+PowerShell 下：
+
+```powershell
+$env:S2_API_KEY="your_api_key"
+python scripts/s2_discovery.py enrich-seeds
+python scripts/s2_discovery.py weekly
+```
+
+bash 下：
+
+```bash
+export S2_API_KEY="your_api_key"
+python scripts/s2_discovery.py enrich-seeds
+python scripts/s2_discovery.py weekly
+```
+
+跑完后，优先检查：
+
+- `discovery/inbox.csv`
+- `discovery/semantic_scholar/semantic_weekly.md`
+
+### 10. 常见问题
+
+`1)` 为什么 `seed_papers.csv` 明明有标题，还是追踪不到？
+
+因为真正稳定的主键是 `s2_paper_id`、`doi`、`arxiv_id`。只靠标题匹配，命中率和稳定性都一般。实践上至少填一个唯一标识。
+
+`2)` 为什么 `inbox.csv` 里没有所有结果？
+
+因为只有 `A/B` 级论文会进入 `inbox.csv`。全部结果会保存在 `semantic_weekly.csv`。
+
+`3)` 为什么 `weekly` 比单独运行某个命令慢？
+
+因为它串行执行整套发现流程，还会生成周报。
+
+`4)` 可以只跑某一类发现吗？
+
+可以，直接用对应子命令，例如 `search`、`citations`、`authors`。
+
+## 四、Prompt（LLM Wiki使用说明）
+
+请将所需目标pdf转为markdown(.md)格式，并存入/raw/papers
+本项目推荐使用marker进行高准确度pdf转md操作。安装pip install marker-pdf==0.2.15 （python<3.10）pip install marker-pdf==0.2.17（python>3.10）
+使用时将pdf存入/raw/pdfs目录下，并运行 marker .\pdfs --output_dir .\papers
+同时本项目提供简易pdf to md脚本，位置存放在/scripts/pdf_to_md.py ，使用时将pdf存入/raw/papers目录下，并运行python scripts/pdf_to_md.py
+
+### 1 Ingest 提示词（处理新论文）
 
 ```text
 处理论文：raw/papers/2401.xxxxx.md
@@ -161,7 +563,7 @@ status（假设）: draft / testing / confirmed / rejected
 重点把"Gap 线索"这一栏写得具体，不要客套。
 ```
 
-### 3.2 领域全景讨论提示词
+### 2 领域全景讨论提示词
 
 ```text
 现在我要和你讨论 [你的研究方向] 的现状。
@@ -180,7 +582,7 @@ status（假设）: draft / testing / confirmed / rejected
 回答结束后问我：要不要把这次讨论的结论写进 wiki/synthesis/？
 ```
 
-### 3.3 Idea 生成提示词
+### 3 Idea 生成提示词
 
 ```text
 我们现在进入创新点讨论模式。
@@ -198,59 +600,69 @@ status（假设）: draft / testing / confirmed / rejected
 讨论后，把达成共识的假设写入 wiki/gaps/hypotheses.md，
 ```
 
-### 3.4 Lint 提示词（每 1-2 周一次）
-### 3.5 多模型辩论触发提示词（配合 shared research.md）
+### 4 Lint 提示词（每 1-2 周一次）
 
-## 四、一个关键点：Query 的答案要写回 wiki
+```text
+我们现在进入 Research Wiki 健康检查模式。
 
-Karpathy 特别强调：好的答案可以作为新页面写回 wiki。一次对比分析、一个你发现的连接——这些很有价值，不应该消失在对话历史里。这样你的探索过程也在知识库里积累复利。
+请先读取并交叉检查：
+- wiki/index.md
+- wiki/overview.md
+- wiki/synthesis/field-map.md
+- wiki/synthesis/shared-assumptions.md
+- wiki/gaps/confirmed-gaps.md
+- wiki/gaps/questions.md
+- wiki/gaps/hypotheses.md
+- wiki/papers/ 下最近入库或最近更新的论文页面
+- wiki/concepts/ 下已有概念页面
+- discovery/inbox.csv 和最新的 discovery/semantic_scholar/semantic_weekly_[run].md（如存在）
 
-具体操作：每当你和 Claude 讨论出一个有价值的分析，在对话末尾加一句：  
-标注 status: draft，记录今天的日期和讨论要点。
+任务：
+1. 找出在 3 篇以上论文中反复出现、但还没有独立 wiki/concepts/ 页面的方法、假设、数据集、评价指标或问题类型。
+   对每个候选概念说明：出现在哪些论文页面中、为什么值得单独建页、建议页面名是什么。
 
-对 wiki/ 做一次健康检查。  
-检查并生成报告：
+2. 检查 wiki/gaps/hypotheses.md 中 status: draft 的假设。
+   判断最近入库论文是否提供了支持证据、反例、边界条件或需要改写的地方。
+   不要直接把 draft 改成 confirmed/rejected，除非证据非常直接；优先给出“建议状态”和理由。
 
-1. 有哪些概念在 3 篇以上论文里出现但没有独立的 concepts/ 页面？
-2. 哪些 hypotheses.md 里的 draft 假设，在新入库的论文里找到了证据或反例？
-3. overview.md 和 field-map.md 里有没有被最近论文推翻的结论？
-4. 找出任何两个论文页面之间存在的矛盾（不同实验结论、不同假设），显式标注
+3. 检查 wiki/overview.md 和 wiki/synthesis/field-map.md。
+   找出是否有被最近论文削弱、推翻、需要加限定条件，或已经过时的声明。
+   每条都必须指出原声明位置、相关新证据、建议修订方向。
+
+4. 找出论文页面之间、概念页面之间、或论文与 synthesis 页面之间的矛盾。
+   矛盾可以是：实验结论不一致、隐含假设冲突、适用场景冲突、评价指标不可比、同一术语定义不同。
+   不要强行调和；冲突观点单独列为“待验证”。
+
+约束：
+- 不要编造引用；只能基于已读取的 wiki/、discovery/ 内容。
+- 每个判断都标注来源文件路径。
+- 区分“直接证据”“间接证据”“推测”。
+- 不要直接修改 wiki；先生成报告，等我确认后再写回。
+- 如果信息不足，明确写“证据不足”，不要补全想象。
 
 报告格式：
 
-```markdown
-## 需要创建的新概念页面
-## 假设状态更新
-## 需要修订的声明
-## 检测到的矛盾
+需要创建的新概念页面
+| 建议页面 | 类型 | 出现位置 | 建页理由 | 优先级 |
+
+假设状态更新
+| 假设 | 当前状态 | 新证据/反例 | 建议状态 | 理由 |
+
+需要修订的声明
+| 文件 | 原声明 | 新证据 | 风险 | 建议修订 |
+
+检测到的矛盾
+| 冲突点 | 来源 A | 来源 B | 冲突类型 | 待验证问题 |
+
+## 建议写回动作
+- 建议新增的 concepts 页面：
+- 建议更新的 gaps/hypotheses 条目：
+- 建议更新的 synthesis/overview 或 field-map 条目：
+- 暂不建议写回、需要继续查证的点：
 ```
 
-[写入 shared research.md 的内容，三端都读这个文件]
-
-```markdown
----
-## 当前讨论轮次：[日期]
-## 议题：[具体问题，例如：是否应该挑战 X 假设]
-## wiki 相关摘录（Claude Code 从 wiki/ 提取）：
-[从 wiki/gaps/confirmed-gaps.md 和 wiki/concepts/ 相关页面粘贴关键段落]
-
-## 上轮结论摘要：
-[上次讨论写回的结论]
-
-## 本轮任务：
-- Claude：综合 wiki 内容，给出综合判断
-- Gemini：联网搜索是否有 2025 年后的最新论文支持或反驳上述分析
-- Codex：挑最弱的假设，找已有论文里的反例
-请各自回答，然后我来汇总写回 wiki/synthesis/discussion-[date].md
----
-```
-
-把这次分析的核心结论（200字以内）写入 `wiki/synthesis/discussion-[今天日期].md`，并更新 `wiki/log.md`。
-
-这样知识库会越来越“懂”你的研究领域，而不是每次都从零开始。
-
-## 多模型协作讨论（shared research.md 三端共享上下文）
-
+### 5 多模型辩论触发提示词（配合 shared research.md 三端共享上下文，每 1-2 周一次）
+（在LLM项目文件夹下打开Claudecode，完成1后关闭powershell。重新在LLM文件夹下打开Gemini Cli，完成2后关闭powershell，依次重复。）
 ### 1）Claude 首轮主持 prompt
 
 ```text
@@ -344,27 +756,11 @@ Karpathy 特别强调：好的答案可以作为新页面写回 wiki。一次对
 - 用中文输出。
 ```
 
-## Semantic Scholar 文献发现（新增）
+## 五、一个关键点：Query 的答案要写回 wiki
 
-新增脚本：`scripts/s2_discovery.py`，用于关键词搜索、种子论文追踪、作者追踪与推荐论文收集。
+Karpathy 特别强调：好的答案可以作为新页面写回 wiki。一次对比分析、一个你发现的连接——这些很有价值，不应该消失在对话历史里。这样你的探索过程也在知识库里积累复利。
 
-```bash
-export S2_API_KEY="xxx"
-python scripts/s2_discovery.py search
-python scripts/s2_discovery.py enrich-seeds
-python scripts/s2_discovery.py citations
-python scripts/s2_discovery.py references
-python scripts/s2_discovery.py authors
-python scripts/s2_discovery.py recommend
-python scripts/s2_discovery.py weekly
-```
+具体操作：每当你和 Claude 讨论出一个有价值的分析，在对话末尾加一句：  
+标注 status: draft，记录今天的日期和讨论要点。
 
-相关文件：
-- `discovery/inbox.csv`
-- `discovery/semantic_scholar/config.yaml`
-- `discovery/semantic_scholar/queries.txt`
-- `discovery/semantic_scholar/seed_papers.csv`
-- `discovery/semantic_scholar/tracked_authors.csv`
-- `discovery/semantic_scholar/semantic_cache.sqlite`
-- `discovery/semantic_scholar/semantic_weekly.csv`
-- `discovery/semantic_scholar/semantic_weekly.md`
+对 wiki/ 做健康检查时，使用上面的 `3.4 Lint 提示词（每 1-2 周一次）`。先生成报告，不要直接写回；等人工确认后，再把需要保留的结论写入 `wiki/concepts/`、`wiki/gaps/` 或 `wiki/synthesis/`。
