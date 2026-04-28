@@ -546,10 +546,36 @@ python scripts/s2_discovery.py weekly
 
 ## 四、Prompt（LLM Wiki使用说明）
 
-请将所需目标pdf转为markdown(.md)格式，并存入/raw/papers
-本项目推荐使用marker进行高准确度pdf转md操作。安装pip install marker-pdf==0.2.15 （python<3.10）pip install marker-pdf==0.2.17（python>3.10）
-使用时将pdf存入/raw/pdfs目录下，并运行 marker .\pdfs --output_dir .\papers
-同时本项目提供简易pdf to md脚本，位置存放在/scripts/pdf_to_md.py ，使用时将pdf存入/raw/papers目录下，并运行python scripts/pdf_to_md.py
+### 0. PDF 转 Markdown 准备
+
+在使用下面的 Ingest 提示词前，先将目标论文 PDF 转换为 Markdown，并把生成的 `.md` 文件放入 `raw/papers/`。
+
+推荐使用 `marker` 做高准确度 PDF 转 Markdown：
+
+```powershell
+# Python < 3.10
+pip install marker-pdf==0.2.15
+
+# Python >= 3.10
+pip install marker-pdf==0.2.17
+```
+
+使用流程：
+
+1. 将 PDF 放入 `raw/pdfs/`。
+2. 在 `raw/` 目录下运行：
+
+```powershell
+marker .\pdfs --output_dir .\papers
+```
+
+本项目也提供一个简易备用脚本：`scripts/pdf_to_md.py`。如果不使用 `marker`，可以将 PDF 放入 `raw/papers/`，然后在项目根目录运行：
+
+```powershell
+python scripts/pdf_to_md.py
+```
+
+转换完成后，确认目标论文对应的 `.md` 文件已经位于 `raw/papers/`，再进入后续 Ingest 流程。
 
 ### 1 Ingest 提示词（处理新论文）
 
