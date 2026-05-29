@@ -155,7 +155,7 @@ ingest "xxx.md"
 ### Prompt 文件
 
 ```text
-prompts/queue.txt
+prompts/queue.md
 ```
 
 ### 使用方式
@@ -272,10 +272,10 @@ mkdir -p ~/.codex/prompts
 ```sh
 touch ~/.codex/prompts/ingest.md
 touch ~/.codex/prompts/check-raw.md
-touch ~/.codex/prompts/queue.txt
+touch ~/.codex/prompts/queue.md
 ```
 
-将 `ingest` 的 prompt 模板写入 `~/.codex/prompts/ingest.md`，将 `check raw` 的 prompt 模板写入 `~/.codex/prompts/check-raw.md`，将 `queue` 的 prompt 模板写入 `~/.codex/prompts/queue.txt`。
+将 `ingest` 的 prompt 模板写入 `~/.codex/prompts/ingest.md`，将 `check raw` 的 prompt 模板写入 `~/.codex/prompts/check-raw.md`，将 `queue` 的 prompt 模板写入 `~/.codex/prompts/queue.md`。
 
 ### 4. 配置 Shell Functions
 
@@ -340,10 +340,10 @@ npm install -g @openai/codex
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\prompts"
 New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\ingest.md"
 New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\check-raw.md"
-New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\queue.txt"
+New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\queue.md"
 ```
 
-将 `ingest` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\ingest.md`，将 `check raw` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\check-raw.md`，将 `queue` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\queue.txt`。
+将 `ingest` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\ingest.md`，将 `check raw` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\check-raw.md`，将 `queue` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\queue.md`。
 
 ### 4. 配置 PowerShell Functions
 
@@ -381,7 +381,7 @@ function check {
 }
 
 function queue {
-    $prompt = Get-Content "$env:USERPROFILE\.codex\prompts\queue.txt" -Raw
+    $prompt = Get-Content "$env:USERPROFILE\.codex\prompts\queue.md" -Raw
     codex $prompt
 }
 ```
