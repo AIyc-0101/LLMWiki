@@ -27,7 +27,7 @@ LLMWiki 使用 Codex CLI 与本地 custom prompt 启动 `shared/research.md` 多
 2. 确认 Codex CLI 已安装；如未安装，提示我运行 npm install -g @openai/codex。
 3. 创建本地 prompt 目录 ~/.codex/prompts/。
 4. 创建 prompt 文件：
-   - ~/.codex/prompts/shared-subagents.md
+   - ~/.codex/prompts/shared_subagents.md
 5. 写入 shared-subagents.md：
    - 读取当前项目的 shared/research.md。
    - 如果“当前议题”仍是占位符，先要求我补充议题。
@@ -37,7 +37,7 @@ LLMWiki 使用 Codex CLI 与本地 custom prompt 启动 `shared/research.md` 多
    - Codex 主会话汇总 Final Synthesis，输出共识、分歧、可信判断、最小验证实验、建议写回位置和写回草稿。
    - 默认不要写回 wiki；只有我明确确认后，才写入 wiki/synthesis/discussion-YYYY-MM-DD.md 并更新 wiki/log.md。
 6. 修改 ~/.zshrc，添加 shared() 函数：
-   - shared research：当参数为 research 时，读取 ~/.codex/prompts/shared-subagents.md，并调用 Codex。
+   - shared research：当参数为 research 时，读取 ~/.codex/prompts/shared_subagents.md，并调用 Codex。
 7. 修改前先检查 ~/.zshrc 中是否已有同名函数，避免重复添加；如已存在，请更新对应函数。
 8. 完成后告诉我需要运行 source ~/.zshrc。
 
@@ -60,7 +60,7 @@ shared research
 2. 确认 Codex CLI 已安装；如未安装，提示我运行 npm install -g @openai/codex。
 3. 创建本地 prompt 目录 %USERPROFILE%\.codex\prompts\。
 4. 创建 prompt 文件：
-   - %USERPROFILE%\.codex\prompts\shared-subagents.md
+   - %USERPROFILE%\.codex\prompts\shared_subagents.md
 5. 写入 shared-subagents.md：
    - 读取当前项目的 shared/research.md。
    - 如果“当前议题”仍是占位符，先要求我补充议题。
@@ -70,7 +70,7 @@ shared research
    - Codex 主会话汇总 Final Synthesis，输出共识、分歧、可信判断、最小验证实验、建议写回位置和写回草稿。
    - 默认不要写回 wiki；只有我明确确认后，才写入 wiki/synthesis/discussion-YYYY-MM-DD.md 并更新 wiki/log.md。
 6. 修改 PowerShell Profile，也就是 $PROFILE，添加 shared function：
-   - shared research：当参数为 research 时，读取 %USERPROFILE%\.codex\prompts\shared-subagents.md，并调用 Codex。
+   - shared research：当参数为 research 时，读取 %USERPROFILE%\.codex\prompts\shared_subagents.md，并调用 Codex。
 7. 修改前先检查 $PROFILE 中是否已有同名 function，避免重复添加；如已存在，请更新对应 function。
 8. 完成后告诉我需要重启 PowerShell，或运行 . $PROFILE。
 
