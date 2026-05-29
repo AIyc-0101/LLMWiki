@@ -23,6 +23,8 @@ check raw
 ↓
 ingest.txt
 ↓
+queue
+↓
 ingest
 ↓
 wiki/papers/*.md
@@ -144,6 +146,105 @@ ingest "xxx.md"
 ingest "xxx.md"
 ```
 
+## 工作流：queue
+
+`queue` 用于批量消费项目根目录下的 `ingest.txt`，将其中的每一行 `ingest "xxx.md"` 视为一个待处理论文任务。
+
+该工作流适合在 `check raw` 生成 `ingest.txt` 后执行。它会从第一行开始顺序处理论文，并在每篇论文成功完成后从 `ingest.txt` 中删除对应行。
+
+### Prompt 文件
+
+```text
+prompts/queue.txt
+```
+
+### 使用方式
+
+```sh
+queue
+```
+
+### 输入格式
+
+`ingest.txt` 必须位于当前项目根目录。每一行格式如下：
+
+```text
+ingest "xxx.md"
+```
+
+其中 `xxx.md` 对应 `raw/papers/xxx.md`。
+
+### 执行规则
+
+1. 读取当前项目根目录下的 `ingest.txt`。
+2. 将每一行 `ingest "xxx.md"` 视为一个待处理任务。
+3. 从第一篇开始顺序处理。
+4. 对每篇论文执行标准 `ingest` workflow：
+   - 阅读 `raw/papers/` 中对应论文。
+   - 提取核心 claim。
+   - 分析默认假设。
+   - 检查与 `wiki/` 的冲突。
+   - 寻找具体 `Gap`。
+   - 按 `CLAUDE.md` 写入 `wiki`。
+5. 每处理完一篇：
+   - 从 `ingest.txt` 中删除对应行。
+   - 保存 `ingest.txt`。
+6. 如果处理失败：
+   - 停止队列。
+   - 报告失败论文。
+   - 不继续后续任务。
+7. 每完成一篇后汇报：
+   - 当前论文。
+   - 新增页面。
+   - 更新页面。
+   - 新增 Gap。
+8. 持续执行直到 `ingest.txt` 为空。
+9. `ingest.txt` 为空时报告：
+
+```text
+Queue completed.
+```
+
+### Prompt 模板
+
+```text
+请读取当前项目根目录下的 ingest.txt。
+
+把其中每一行：
+
+ingest "xxx.md"
+
+视为一个待处理任务队列。
+
+按照以下规则执行：
+
+1. 从第一篇开始处理。
+2. 对每篇论文执行标准 ingest workflow：
+   - 阅读 raw/papers/ 对应论文
+   - 提取核心 claim
+   - 分析默认假设
+   - 检查与 wiki 的冲突
+   - 寻找具体 Gap
+   - 按 CLAUDE.md 写入 wiki
+3. 每处理完一篇：
+   - 从 ingest.txt 中删除对应行
+   - 保存文件
+4. 如果处理失败：
+   - 停止队列
+   - 报告失败论文
+   - 不继续后续任务
+5. 每完成一篇后汇报：
+   - 当前论文
+   - 新增页面
+   - 更新页面
+   - 新增 Gap
+6. 持续执行直到 ingest.txt 为空。
+7. ingest.txt 为空时报告：
+   "Queue completed."
+
+开始执行队列。
+```
+
 ## macOS 配置
 
 ### 1. 安装 Node.js
@@ -171,9 +272,10 @@ mkdir -p ~/.codex/prompts
 ```sh
 touch ~/.codex/prompts/ingest.md
 touch ~/.codex/prompts/check-raw.md
+touch ~/.codex/prompts/queue.txt
 ```
 
-将 `ingest` 的 prompt 模板写入 `~/.codex/prompts/ingest.md`，将 `check raw` 的 prompt 模板写入 `~/.codex/prompts/check-raw.md`。
+将 `ingest` 的 prompt 模板写入 `~/.codex/prompts/ingest.md`，将 `check raw` 的 prompt 模板写入 `~/.codex/prompts/check-raw.md`，将 `queue` 的 prompt 模板写入 `~/.codex/prompts/queue.txt`。
 
 ### 4. 配置 Shell Functions
 
@@ -193,6 +295,10 @@ check() {
     echo "Usage: check raw"
   fi
 }
+
+queue() {
+  codex "$(cat ~/.codex/prompts/queue.txt)"
+}
 ```
 
 重新加载 shell：
@@ -205,6 +311,7 @@ source ~/.zshrc
 
 ```sh
 check raw
+queue
 ingest "xxx.md"
 ```
 
@@ -233,9 +340,10 @@ npm install -g @openai/codex
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\prompts"
 New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\ingest.md"
 New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\check-raw.md"
+New-Item -ItemType File -Force "$env:USERPROFILE\.codex\prompts\queue.txt"
 ```
 
-将 `ingest` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\ingest.md`，将 `check raw` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\check-raw.md`。
+将 `ingest` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\ingest.md`，将 `check raw` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\check-raw.md`，将 `queue` 的 prompt 模板写入 `%USERPROFILE%\.codex\prompts\queue.txt`。
 
 ### 4. 配置 PowerShell Functions
 
@@ -271,6 +379,11 @@ function check {
         Write-Host "Usage: check raw"
     }
 }
+
+function queue {
+    $prompt = Get-Content "$env:USERPROFILE\.codex\prompts\queue.txt" -Raw
+    codex $prompt
+}
 ```
 
 重启 PowerShell，或运行：
@@ -283,6 +396,7 @@ function check {
 
 ```powershell
 check raw
+queue
 ingest "xxx.md"
 ```
 
@@ -292,6 +406,7 @@ ingest "xxx.md"
 
 ```sh
 check raw
+queue
 ingest "xxx.md"
 ```
 
@@ -299,6 +414,7 @@ ingest "xxx.md"
 
 ```powershell
 check raw
+queue
 ingest "xxx.md"
 ```
 
@@ -306,7 +422,9 @@ ingest "xxx.md"
 
 - `CLAUDE.md` 定义 wiki 输出格式；`ingest` 写入时应遵循该格式。
 - `ingest.txt` 用于 batch ingestion，每行对应一篇尚未处理论文。
+- `queue` 消费 `ingest.txt`，每成功处理一篇就删除对应任务行。
 - custom prompts 是本地配置，通常保存在用户目录下的 `.codex/prompts/`。
 - fuzzy matching 会忽略大小写、空格、连字符与中英文标点差异。
 - `check raw` 只负责生成待处理列表，不应修改 `raw/papers/` 或 `wiki/papers/`。
 - `ingest` 在讨论完成前不应写入 wiki。
+- `queue` 在任一论文处理失败时必须停止，不应继续后续任务。
