@@ -1,5 +1,5 @@
 # LLMWiki项目使用说明
-Semantic Scholar寻找文献使用说明见第三节、LLMWiki使用说明见第四节。
+Semantic Scholar寻找文献使用说明见第三节、LLMWiki使用说明见第四节。新增一键入库、基于subagent多端讨论见dev文件夹。
 
 ## 一、目录结构设计
 
